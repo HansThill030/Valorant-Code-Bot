@@ -10,6 +10,8 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
+PROCESSED_FILE = "/data/processed_messages.txt"
+
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DISCORD_CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID"))
@@ -72,6 +74,27 @@ def extract_text(payload):
 
     return text
 
+def load_processed_messages():
+    if not os.path.exists(PROCESSED_FILE):
+        return set()
+
+    with open(PROCESSED_FILE, "r") as f:
+        return {
+            line.strip()
+            for line in f
+            if line.strip()
+        }
+
+
+def save_processed_message(message_id):
+    os.makedirs(
+        os.path.dirname(PROCESSED_FILE),
+        exist_ok=True
+    )
+
+    with open(PROCESSED_FILE, "a") as f:
+        f.write(message_id + "\n")
+
 
 def extract_code(text):
     patterns = [
@@ -110,7 +133,7 @@ class CodeBot(discord.Client):
 
     async def setup_hook(self):
         self.gmail = gmail_service()
-        self.seen = set()
+        self.seen = load_processed_messages()
 
         asyncio.create_task(
             self.check_gmail()
@@ -164,6 +187,9 @@ class CodeBot(discord.Client):
                         await channel.send(
                             f"VALORANT login code: `{code}`"
                         )
+
+                        save_processed_message(message_id)
+                        self.seen.add(message_id)
 
             except Exception as e:
                 print("Error:", e)
