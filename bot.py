@@ -2,20 +2,19 @@ import os
 import re
 import base64
 import asyncio
+import json
 
 import discord
-from dotenv import load_dotenv
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 
-load_dotenv()
-
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DISCORD_CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID"))
+
+GOOGLE_TOKEN_JSON = os.getenv("GOOGLE_TOKEN_JSON")
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly"
@@ -23,28 +22,29 @@ SCOPES = [
 
 
 def gmail_service():
-    creds = None
+    if not GOOGLE_TOKEN_JSON:
+        raise RuntimeError("GOOGLE_TOKEN_JSON is not configured.")
 
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file(
-            "token.json",
-            SCOPES
+    token_data = json.loads(GOOGLE_TOKEN_JSON)
+
+    creds = Credentials.from_authorized_user_info(
+        token_data,
+        SCOPES
+    )
+
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+
+    if not creds.valid:
+        raise RuntimeError(
+            "Gmail credentials are invalid or expired."
         )
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                "credentials.json",
-                SCOPES
-            )
-            creds = flow.run_local_server(port=0)
-
-        with open("token.json", "w") as f:
-            f.write(creds.to_json())
-
-    return build("gmail", "v1", credentials=creds)
+    return build(
+        "gmail",
+        "v1",
+        credentials=creds
+    )
 
 
 def decode_body(data):
@@ -91,7 +91,7 @@ def extract_code(text):
 def get_new_messages(service):
     result = service.users().messages().list(
         userId="me",
-        q='from:(riotgames.com) newer_than:1d',
+        q="from:(riotgames.com) newer_than:1d",
         maxResults=10
     ).execute()
 
@@ -112,13 +112,17 @@ class CodeBot(discord.Client):
         self.gmail = gmail_service()
         self.seen = set()
 
-        asyncio.create_task(self.check_gmail())
+        asyncio.create_task(
+            self.check_gmail()
+        )
 
     async def check_gmail(self):
 
         await self.wait_until_ready()
 
-        channel = self.get_channel(DISCORD_CHANNEL_ID)
+        channel = self.get_channel(
+            DISCORD_CHANNEL_ID
+        )
 
         if channel is None:
             print("Discord channel not found.")
@@ -127,7 +131,9 @@ class CodeBot(discord.Client):
         while not self.is_closed():
 
             try:
-                messages = get_new_messages(self.gmail)
+                messages = get_new_messages(
+                    self.gmail
+                )
 
                 for item in messages:
 
@@ -143,9 +149,14 @@ class CodeBot(discord.Client):
                         message_id
                     )
 
-                    payload = message.get("payload", {})
+                    payload = message.get(
+                        "payload",
+                        {}
+                    )
 
-                    text = extract_text(payload)
+                    text = extract_text(
+                        payload
+                    )
 
                     code = extract_code(text)
 
@@ -162,6 +173,8 @@ class CodeBot(discord.Client):
 
 intents = discord.Intents.default()
 
-client = CodeBot(intents=intents)
+client = CodeBot(
+    intents=intents
+)
 
 client.run(DISCORD_TOKEN)
